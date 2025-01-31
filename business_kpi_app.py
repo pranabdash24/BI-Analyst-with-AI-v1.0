@@ -11,7 +11,7 @@ from fpdf import FPDF
 from PIL import Image
 
 # Configure Google Gemini API
-GOOGLE_API_KEY = ""
+GOOGLE_API_KEY = st.secrets["general"]["API_KEY"]
 genai.configure(api_key=GOOGLE_API_KEY)
 
 @st.cache_data
