@@ -98,7 +98,7 @@ def send_data_to_gemini(df, industry, goal, user_query=None):
     {data_json}
     
     2. For each KPI:
-    - Create a visualization using Plotly Express
+    - Create a good and nice visualization which should have a meaning using Plotly Express
     - Use st.plotly_chart(fig) to display it
     - Add titles/axis labels
     - Use Streamlit layout components
