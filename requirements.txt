@@ -5,3 +5,5 @@ google.generativeai
 numpy
 datetime
 openpyxl
+fpdf
+PIL
