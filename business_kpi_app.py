@@ -75,7 +75,7 @@ def create_pdf_report(content, images):
         pdf.set_text_color(108, 117, 125)
         pdf.cell(0, 10, f'Figure {i+1}: Data Visualization', 0, 1, 'C')
     
-    return pdf.output(dest="S").encode("UTF-8")
+    return pdf.output(dest="S").encode("latin1")
 
 def handle_missing_data(df, strategy):
     if strategy == "Drop Rows":
