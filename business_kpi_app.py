@@ -52,30 +52,43 @@ def create_pdf_report(content, images):
     pdf.multi_cell(0, 8, content)
     pdf.ln(5)
     
-    # Image handling
+    # Image handling with high resolution
     for i, img_bytes in enumerate(images):
         pdf.add_page()
         img_bytes.seek(0)
         
+        # Open and convert image
         img = Image.open(img_bytes).convert("RGB")
-        img_w, img_h = img.size
-        aspect = img_h / img_w
         
-        max_width = 180
-        calculated_height = max_width * aspect
-        x_position = (210 - max_width) / 2
+        # Calculate dimensions for 300 DPI
+        target_width_mm = 180
+        mm_to_inch = 1/25.4
+        dpi = 300
+        target_width_px = int(target_width_mm * mm_to_inch * dpi)
+        aspect = img.height / img.width
+        target_height_px = int(target_width_px * aspect)
         
-        img = img.resize((int(max_width), int(calculated_height)))
-        img_filename = f"plot_{i}.jpg"
-        img.save(img_filename, format="JPEG", quality=95)
+        # High-quality resize
+        img = img.resize((target_width_px, target_height_px), Image.LANCZOS)
         
-        pdf.image(img_filename, x=x_position, y=30, w=max_width)
-        pdf.set_y(30 + calculated_height + 5)
+        # Save to buffer
+        img_buffer = BytesIO()
+        img.save(img_buffer, format="JPEG", quality=95, dpi=(dpi, dpi))
+        img_buffer.seek(0)
+        
+        # Add to PDF
+        pdf.image(img_buffer, 
+                 x=(210 - target_width_mm)/2,  # Center horizontally
+                 y=30,
+                 w=target_width_mm)
+        
+        # Add caption
+        pdf.set_y(30 + (target_width_mm * aspect * mm_to_inch * 25.4) + 5)
         pdf.set_font('Arial', 'I', 10)
         pdf.set_text_color(108, 117, 125)
         pdf.cell(0, 10, f'Figure {i+1}: Data Visualization', 0, 1, 'C')
     
-    return pdf.output(dest="S").encode("latin1")
+    return pdf.output(dest="S").encode("UTF-8")
 
 def handle_missing_data(df, strategy):
     if strategy == "Drop Rows":
@@ -98,9 +111,9 @@ def send_data_to_gemini(df, industry, goal, user_query=None):
     {data_json}
     
     2. For each KPI:
-    - Create a good and nice visualization which should have a meaning using Plotly Express
+    - Create a meaningful visualization using Plotly Express
     - Use st.plotly_chart(fig) to display it
-    - Add titles/axis labels
+    - Add clear titles and axis labels
     - Use Streamlit layout components
     
     3. Provide a brief insight after each chart
@@ -120,7 +133,7 @@ def send_data_to_gemini(df, industry, goal, user_query=None):
     ```
     Insight: [Your insight here]
 
-    5. At last a proper summary of the business, SWOT, and future recommendations.
+    4. Include a final summary with SWOT analysis and recommendations.
     """
     if user_query:
         prompt += f"\nUser Query: {user_query}"
@@ -190,40 +203,45 @@ def main():
                         try:
                             exec(code, exec_env)
                             
-                            fig = exec_env.get('fig' + str(i + 1) if i > 0 else 'fig')
-                            if fig and hasattr(fig, 'data') and len(fig.data) > 0:
-                                img_bytes = pio.to_image(fig, format="png")
-                                images.append(BytesIO(img_bytes))  
-                            else:
-                                st.warning(f"Figure {i + 1} has no valid data. Skipping.")
+                            # Retrieve figure with proper naming convention
+                            fig_name = f'fig{i+1}'
+                            fig = exec_env.get(fig_name)
                             
+                            if fig and hasattr(fig, 'data') and len(fig.data) > 0:
+                                # Generate high-res image
+                                img_bytes = pio.to_image(fig, format="png", scale=3)
+                                images.append(BytesIO(img_bytes))
+                                
                             if i < len(insights):
                                 st.success(f"**Insight {i+1}:** {insights[i].strip()}")
                         except Exception as e:
                             st.error(f"Error executing KPI {i+1}: {str(e)}")
 
-                report_content = f"Industry: {industry}\nObjective: {goal}\n\nInsights:\n" + "\n".join(insights)
+                # Generate PDF report
+                report_content = f"Industry: {industry}\nObjective: {goal}\n\nKey Insights:\n" + "\n".join([f"{i+1}. {insight}" for i, insight in enumerate(insights)])
                 pdf_report = create_pdf_report(report_content, images)
-                st.download_button("Download Report", pdf_report, file_name="business_report.pdf", mime="application/pdf")
+                st.download_button("Download Full Report", pdf_report, file_name="business_report.pdf", mime="application/pdf")
 
             except Exception as e:
                 st.error(f"Processing Error: {str(e)}")
+
         # User feedback
         st.sidebar.header("Feedback")
         feedback = st.sidebar.text_area("Provide feedback to help us improve!")
         if st.sidebar.button("Submit Feedback"):
             st.sidebar.success("Thank you for your feedback!")
+            
         # User guide
         with st.expander("📖 User Guide"):
             st.write("""
-            1. Upload your dataset (CSV or Excel).
-            2. Select the industry and primary objective.
-            3. Customize data (e.g., handle missing values, filter columns, or date range).
-            4. Any specific question you have in mind... you can ask the data
-            5. Click 'Analyze Data & Generate Report'.
-            6. View insights and visualizations.
-            7. Download the report and provide feedback.
+            1. Upload your dataset (CSV or Excel)
+            2. Select industry sector and primary objective
+            3. Customize data using sidebar filters
+            4. Enter specific questions (optional)
+            5. Click 'Analyze Data & Generate Report'
+            6. View interactive visualizations
+            7. Download PDF report
             """)
-        
+
 if __name__ == "__main__":
     main()
