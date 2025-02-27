@@ -7,3 +7,6 @@ datetime
 openpyxl
 fpdf
 kaleido
+sys
+traceback
+hashlib
