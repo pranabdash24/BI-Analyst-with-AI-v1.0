@@ -17,8 +17,8 @@ import hashlib
 
 # Enhanced Security Configuration
 AUTH_CONFIG = {
-    "username": st.secrets["general"]["username"],
-    "password": st.secrets["general"]["password"],
+    "username": st.secrets["general"]["USER"],
+    "password": st.secrets["general"]["PASS"],
     "max_attempts": 3  # Add login attempt limitation
 }
 # Configure Google Gemini API
