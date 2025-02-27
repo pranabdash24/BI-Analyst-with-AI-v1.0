@@ -6,4 +6,3 @@ numpy
 datetime
 openpyxl
 fpdf
-hashlib
