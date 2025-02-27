@@ -6,5 +6,4 @@ numpy
 datetime
 openpyxl
 fpdf
-traceback
 hashlib
