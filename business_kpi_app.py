@@ -9,239 +9,415 @@ from io import BytesIO
 import plotly.io as pio
 from fpdf import FPDF
 from PIL import Image
+import base64
+import random
+import sys
+import traceback
+import hashlib
 
+# Enhanced Security Configuration
+AUTH_CONFIG = {
+    "username": st.secrets["general"]["username"],
+    "password": st.secrets["general"]["password"],
+    "max_attempts": 3  # Add login attempt limitation
+}
 # Configure Google Gemini API
 GOOGLE_API_KEY = st.secrets["general"]["API_KEY"]
 genai.configure(api_key=GOOGLE_API_KEY)
+
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    /* Add animated background for login */
+    .login-bg {position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+              background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+              background-size: 400% 400%; animation: gradient 15s ease infinite;}
+    @keyframes gradient {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+    .login-container {position: relative; z-index: 1;}
+    /* Add responsive design */
+    @media (max-width: 600px) {.swot-grid {grid-template-columns: 1fr;}}
+    .login-title {text-align: center; margin-bottom: 2rem; color: #2c3e50;}
+    .login-button {width: 100%; margin-top: 1rem;}
+    .main {background-color:rgba(248, 249, 250, 0.45);}
+    .stButton>button {border-radius: 20px; padding: 10px 25px;}
+    .stSelectbox, .stMultiselect, .stSlider {padding: 5px;}
+    .report-view {margin: 20px 0; padding: 25px; background: white; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
+    .dashboard-header {background: linear-gradient(45deg,rgba(76, 175, 79, 0.56), #45a049); color: white; padding: 2rem; border-radius: 10px; margin-bottom: 2rem;}
+    .kpi-card {background: white; border-radius: 10px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem;}
+    .swot-grid {display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem;}
+    .insight-card {padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
+</style>
+""", unsafe_allow_html=True)
+
+def check_authentication(username, password):
+    """Enhanced authentication with attempt tracking"""
+    st.session_state.setdefault('login_attempts', 0)
+    
+    if st.session_state.login_attempts >= AUTH_CONFIG["max_attempts"]:
+        st.error("Too many failed attempts. Please try again later.")
+        return False
+        
+    hashed_input = hashlib.sha256(password.encode()).hexdigest()
+    if (username == AUTH_CONFIG["username"] and 
+        hashed_input == AUTH_CONFIG["password"]):
+        st.session_state.login_attempts = 0
+        return True
+    
+    st.session_state.login_attempts += 1
+    return False
+
+def render_login_page():
+    """Enhanced login page with security features"""
+    st.markdown("<div class='login-bg'></div>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("<div class='login-container'>", unsafe_allow_html=True)
+        st.markdown("<h2 class='login-title'>🔒 Enterprise Analytics Login</h2>", unsafe_allow_html=True)
+        
+        with st.form("auth_form"):
+            username = st.text_input("Username", help="Contact admin if you forgot credentials")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign In", use_container_width=True)
+            
+            if submitted:
+                if check_authentication(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.success("Login successful! Redirecting...")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    remaining = AUTH_CONFIG["max_attempts"] - st.session_state.login_attempts
+                    st.error(f"Invalid credentials. {remaining} attempts remaining")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 @st.cache_data
 def load_data(file):
     return pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
 
-def create_pdf_report(content, images):
-    class PDF(FPDF):
-        def header(self):
-            self.set_font('Arial', 'B', 12)
-            self.set_text_color(33, 37, 41)
-            self.cell(0, 10, 'Business Intelligence Report', 0, 1, 'C')
-            self.ln(5)
-            
-        def footer(self):
-            self.set_y(-15)
-            self.set_font('Arial', 'I', 8)
-            self.set_text_color(128, 128, 128)
-            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
-    pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    
-    # Report metadata
-    pdf.set_font('Arial', 'B', 16)
-    pdf.set_text_color(33, 37, 41)
-    pdf.cell(0, 10, 'Business Analysis Report', 0, 1, 'C')
-    
-    pdf.set_font('Arial', '', 12)
-    pdf.set_text_color(108, 117, 125)
-    pdf.cell(0, 10, f'Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 0, 1, 'C')
-    pdf.ln(10)
-    
-    # Main content
-    pdf.set_font('Arial', '', 12)
-    pdf.set_text_color(33, 37, 41)
-    pdf.multi_cell(0, 8, content)
-    pdf.ln(5)
-    
-    # Image handling with high resolution
-    for i, img_bytes in enumerate(images):
-        pdf.add_page()
-        img_bytes.seek(0)
-        
-        # Open and convert image
-        img = Image.open(img_bytes).convert("RGB")
-        
-        # Calculate dimensions for 300 DPI
-        target_width_mm = 180
-        mm_to_inch = 1/25.4
-        dpi = 300
-        target_width_px = int(target_width_mm * mm_to_inch * dpi)
-        aspect = img.height / img.width
-        target_height_px = int(target_width_px * aspect)
-        
-        # High-quality resize
-        img = img.resize((target_width_px, target_height_px), Image.LANCZOS)
-        
-        # Save to buffer
-        img_buffer = BytesIO()
-        img.save(img_buffer, format="JPEG", quality=95, dpi=(dpi, dpi))
-        img_buffer.seek(0)
-        
-        # Add to PDF
-        pdf.image(img_buffer, 
-                 x=(210 - target_width_mm)/2,  # Center horizontally
-                 y=30,
-                 w=target_width_mm)
-        
-        # Add caption
-        pdf.set_y(30 + (target_width_mm * aspect * mm_to_inch * 25.4) + 5)
-        pdf.set_font('Arial', 'I', 10)
-        pdf.set_text_color(108, 117, 125)
-        pdf.cell(0, 10, f'Figure {i+1}: Data Visualization', 0, 1, 'C')
-    
-    return pdf.output(dest="S").encode("UTF-8")
-
 def handle_missing_data(df, strategy):
-    if strategy == "Drop Rows":
-        return df.dropna()
-    elif strategy == "Fill with Mean":
-        return df.fillna(df.mean())
-    elif strategy == "Fill with Median":
-        return df.fillna(df.median())
-    return df
+    strategies = {
+        "Drop Rows": df.dropna,
+        "Fill with Mean": lambda: df.fillna(df.mean(numeric_only=True)),
+        "Fill with Median": lambda: df.fillna(df.select_dtypes(include=np.number).median())
+    }
+    return strategies.get(strategy, lambda: df)()
 
-def send_data_to_gemini(df, industry, goal, user_query=None):
-    df_subset = df.head(100)
-    data_json = df_subset.to_json(orient="records", date_format='iso')
-    
-    prompt = f"""
-    You are a business intelligence assistant analyzing {industry} data for {goal}. 
-    Generate Python code using Plotly Express wrapped in ```python blocks. Follow these steps:
+# Data processing functions remain unchanged
 
-    1. Identify major KPIs from this data:
-    {data_json}
+def generate_dynamic_kpis(df):
+    kpis = {}
+    numeric_cols = df.select_dtypes(include=np.number).columns
     
-    2. For each KPI:
-    - Create a meaningful visualization using Plotly Express
-    - Use st.plotly_chart(fig) to display it
-    - Add clear titles and axis labels
-    - Use Streamlit layout components
+    if len(numeric_cols) > 0:
+        if 'revenue' in numeric_cols:
+            kpis['Revenue Growth'] = f"{df['revenue'].pct_change().mean() * 100:.1f}%"
+        if 'customers' in df.columns:
+            kpis['Customer Retention'] = f"{df['customers'].iloc[-1] / df['customers'].iloc[0] * 100:.1f}%"
+        if 'cost' in numeric_cols and 'revenue' in numeric_cols:
+            kpis['Profit Margin'] = f"{(df['revenue'].sum() - df['cost'].sum()) / df['revenue'].sum() * 100:.1f}%"
+        
+        if len(kpis) == 0:
+            kpis[f"Avg {numeric_cols[0]}"] = f"{df[numeric_cols[0]].mean():.2f}"
+            if len(numeric_cols) > 1:
+                kpis[f"Total {numeric_cols[1]}"] = f"{df[numeric_cols[1]].sum():,.0f}"
     
-    3. Provide a brief insight after each chart
+    return kpis
 
+def generate_ai_analysis(df, industry, goal):
+    """Add error handling for API calls"""
+    try:
+        data_sample = df.head(1000).to_dict(orient='records')
+        prompt = f"""As a Head senior {industry} analyst, create interactive figures understandable and simple but not vague with Plotly express wrapped in ```python blocks for {goal} using this data:
+    {data_sample}
+    
+    Requirements:
+    1. Use appropriate chart types (line, bar, scatter, other)
+    2. Use EXACTLY these variable names: fig1, fig2, fig3
+    3. Only use columns that exist in the data: {list(df.columns)}
+    4. Add meaningful titles and axis labels
+    5. Provide a brief insight after each chart/visualization
+    6. Include hover interactions
+    7. Generate SWOT analysis with clear Strengths, Weaknesses, Opportunities, Threats
+    8. Create Few strategic recommendations
+    9. Provide 5 deep insights with explanations
+    
     Format response EXACTLY like:
+    
+    ### VISUALIZATIONS ###
     ```python
     # KPI 1 Visualization
-    fig1 = px.line(df, x='...', y='...')
-    st.plotly_chart(fig1)
+    fig1 = px.line(df, x='valid_column_name', y='valid_column_name', title='Meaningful Title')
     ```
     Insight: [Your insight here]
 
     ```python
     # KPI 2 Visualization 
-    fig2 = px.bar(df, x='...', y='...')
-    st.plotly_chart(fig2)
+    fig2 = px.bar(df, x='valid_column_name', y='valid_column_name', title='Meaningful Title')
     ```
     Insight: [Your insight here]
-
-    4. Include a final summary with SWOT analysis and recommendations.
-    """
-    if user_query:
-        prompt += f"\nUser Query: {user_query}"
     
-    model = genai.GenerativeModel("gemini-1.5-pro-latest")
-    response = model.generate_content(prompt)
-    return response.text
+    ### SWOT ANALYSIS ###
+    - Strengths:
+      * Strength 1
+      * Strength 2
+    - Weaknesses:
+      * Weakness 1
+      * Weakness 2
+    - Opportunities:
+      * Opportunity 1
+      * Opportunity 2
+    - Threats:
+      * Threat 1
+      * Threat 2
+    
+    ### RECOMMENDATIONS ###
+     1. Recommendation 1
+     2. Recommendation 2
+     3. Recommendation 3
+    
+    ### DEEP INSIGHTS ###
+     - Insight 1: Explanation
+     - Insight 2: Explanation
+     - Insight 3: Explanation
+     - Insight 4: Explanation
+     - Insight 5: Explanation"""
+        
+        model = genai.GenerativeModel("gemini-1.5-pro-latest")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"AI Analysis failed: {str(e)}")
+        return ""
+
+def parse_ai_response(response):
+    """More robust parsing with error handling"""
+    parsed_data = {
+        'figures': [],
+        'swot': {'Strengths': [], 'Weaknesses': [], 'Opportunities': [], 'Threats': []},
+        'recommendations': [],
+        'insights': []
+    }
+    
+    try:
+        # Enhanced regex patterns with fallbacks
+        code_blocks = re.findall(r'```python\s*(.*?)\s*```', response, re.DOTALL) or []
+        
+        # SWOT parsing with improved pattern matching
+        swot_section = re.search(r'### SWOT ANALYSIS ###(.*?)(###|$)', response, re.DOTALL)
+        if swot_section:
+            for category in parsed_data['swot']:
+                items = re.findall(rf'{category}:\s*([\s\S]*?)(?=\n\s*-|\Z)', swot_section.group(1))
+                if items:
+                    parsed_data['swot'][category] = [item.strip() for item in items[0].split('*') if item.strip()]
+        
+        # Recommendations with alternative numbering formats
+        rec_section = re.search(r'### RECOMMENDATIONS ###(.*?)(###|$)', response, re.DOTALL)
+        if rec_section:
+            parsed_data['recommendations'] = [re.sub(r'^\d+\.?\s*', '', line).strip() 
+                                              for line in rec_section.group(1).split('\n') if line.strip()]
+        
+        # Insights with flexible formatting
+        insights_section = re.search(r'### DEEP INSIGHTS ###(.*?)(###|$)', response, re.DOTALL)
+        if insights_section:
+            parsed_data['insights'] = [line.strip().split(':', 1)[1].strip() 
+                                       for line in insights_section.group(1).split('\n') if ':' in line]
+            
+    except Exception as e:
+        st.error(f"Error parsing AI response: {str(e)}")
+        
+    return code_blocks, parsed_data['swot'], parsed_data['recommendations'], parsed_data['insights']
+
+def safe_execute_code(code, env):
+    try:
+        exec(code, env)
+        return True, None
+    except Exception as e:
+        error_type = type(e).__name__
+        error_message = str(e)
+        tb = traceback.format_exc()
+        return False, f"{error_type}: {error_message}\n\nTraceback:\n{tb}"
+
+def generate_pdf_report():
+    """Stub for PDF generation"""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Enterprise Analytics Report", ln=1, align="C")
+    # Add additional report details as needed
+    pdf_output = BytesIO()
+    pdf.output(pdf_output)
+    st.download_button("Download PDF", pdf_output.getvalue(), "report.pdf", "application/pdf")
+
+def render_dashboard():
+    """Enhanced dashboard with responsive design"""
+    # Add session timeout warning
+    if 'last_activity' not in st.session_state:
+        st.session_state.last_activity = datetime.now()
+    else:
+        inactive_time = datetime.now() - st.session_state.last_activity
+        if inactive_time.seconds > 1800:  # 30 minute timeout
+            st.warning("Session timed out due to inactivity")
+            st.session_state.authenticated = False
+            st.rerun()
+    
+    st.markdown("<div class='dashboard-header'><h1>Interactive Analytics Dashboard</h1></div>", unsafe_allow_html=True)
+    
+    # Dynamic KPIs
+    if 'processed_data' in st.session_state:
+        df = st.session_state.processed_data
+        kpis = generate_dynamic_kpis(df)
+        if len(kpis) > 0:
+            cols = st.columns(min(len(kpis), 4))
+            for i, (kpi, value) in enumerate(kpis.items()):
+                if i < len(cols):
+                    cols[i].metric(kpi, value)
+
+    # Visualization Tabs
+    tab1, tab2 = st.tabs(["Primary Analysis", "Deep Insights"])
+    
+    with tab1:
+        if 'dashboard_data' in st.session_state and 'figures' in st.session_state.dashboard_data:
+            for idx, fig in enumerate(st.session_state.dashboard_data['figures'], 1):
+                try:
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error displaying visualization {idx}: {str(e)}")
+    
+    with tab2:
+        if 'dashboard_data' in st.session_state and 'insights' in st.session_state.dashboard_data:
+            for insight in st.session_state.dashboard_data['insights']:
+                st.markdown(f"""
+                <div class="insight-card">
+                    <h4>🔍 Insight</h4>
+                    <p>{insight}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                st.write("")
+    
+    # SWOT Analysis
+    if 'dashboard_data' in st.session_state and 'swot' in st.session_state.dashboard_data:
+        st.markdown("## 📊 Strategic Assessment")
+        with st.expander("SWOT Analysis", expanded=True):
+            cols = st.columns(4)
+            for i, (category, items) in enumerate(st.session_state.dashboard_data['swot'].items()):
+                with cols[i]:
+                    st.subheader(category)
+                    for item in items:
+                        st.markdown(f"▸ {item}")
+    
+    # Recommendations
+    if 'dashboard_data' in st.session_state and 'recommendations' in st.session_state.dashboard_data:
+        st.markdown("## 🎯 Strategic Recommendations")
+        for i, rec in enumerate(st.session_state.dashboard_data['recommendations'], 1):
+            st.markdown(f"{i}. {rec}")
+
+    # Sidebar enhancements for export and help
+    with st.sidebar.expander("📤 Export Results"):
+        if st.button("Export Report as PDF"):
+            generate_pdf_report()
+            
+    with st.sidebar.expander("ℹ️ Help"):
+        st.info("""
+        - Use the main panel for data analysis
+        - Click charts to interact
+        - Export results using sidebar tools
+        """)
+    
+    # Navigation
+    if st.button("← Return to Main Analysis"):
+        st.session_state.current_page = 'main'
+        st.rerun()
+
+def main_application():
+    """Enhanced main app with proper session handling"""
+    st.session_state.setdefault('current_page', 'main')
+    
+    # Persistent sidebar with user info and settings
+    with st.sidebar:
+        st.write(f"👤 Welcome, {st.session_state.username}")
+        if st.button("🚪 Logout"):
+            for key in list(st.session_state.keys()):
+                if key not in ['authenticated', 'login_attempts']:
+                    del st.session_state[key]
+            st.session_state.authenticated = False
+            st.rerun()
+        
+        st.write("---")
+        st.write("🔧 Analysis Settings")
+        industry = st.selectbox("Industry", ["Retail", "Finance", "Healthcare", "Manufacturing", "Technology"])
+        goal = st.selectbox("Goal", ["Revenue Optimization", "Cost Reduction", "Customer Insights", "Operational Efficiency"])
+    
+    # Main content
+    if st.session_state['current_page'] == 'dashboard':
+        render_dashboard()
+        return
+
+    st.markdown("<div class='dashboard-header'><h1>📈 Enterprise Analytics Suite</h1></div>", unsafe_allow_html=True)
+    
+    with st.expander("🚀 Quick Start Guide", expanded=True):
+        cols = st.columns(3)
+        cols[0].info("1. Upload your dataset")
+        cols[1].warning("2. Configure settings")
+        cols[2].success("3. Generate insights")
+    
+    with st.form("analysis_form"):
+        uploaded_file = st.file_uploader("Upload Dataset (CSV/XLSX)", type=["csv", "xlsx"])
+        # Note: Industry and goal are also set in the sidebar. You can remove these from here if desired.
+        if st.form_submit_button("Analyze Data"):
+            if uploaded_file:
+                df = load_data(uploaded_file)
+                df = handle_missing_data(df, "Fill with Median")
+                st.session_state.processed_data = df
+                
+                with st.spinner("Generating AI-powered insights..."):
+                    analysis_report = generate_ai_analysis(df, industry, goal)
+                    code_blocks, swot, recommendations, insights = parse_ai_response(analysis_report)
+                    
+                    # Execute visualization code
+                    figures = []
+                    exec_env = {
+                        'df': df,
+                        'px': px,
+                        'np': np,
+                        'pd': pd,
+                        'fig1': None,
+                        'fig2': None,
+                        'fig3': None
+                    }
+                    
+                    for code in code_blocks:
+                        success, error = safe_execute_code(code, exec_env)
+                        if not success:
+                            st.error(f"Code execution error:\n{error}")
+                        else:
+                            # Collect figures explicitly
+                            new_figures = [
+                                exec_env.get('fig1'),
+                                exec_env.get('fig2'),
+                                exec_env.get('fig3')
+                            ]
+                            figures.extend([fig for fig in new_figures if fig is not None])
+                    
+                    st.session_state.dashboard_data = {
+                        'figures': figures,
+                        'swot': swot,
+                        'recommendations': recommendations,
+                        'insights': insights
+                    }
+                
+                st.session_state.current_page = 'dashboard'
+                st.rerun()
+            else:
+                st.error("Please upload a valid dataset")
 
 def main():
-    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>Business Intelligence Assistant</h1>", unsafe_allow_html=True)
-    st.warning("⚠️ This app executes AI-generated code. Only use with trusted data sources.")
-
-    uploaded_file = st.file_uploader("Upload business data (CSV or Excel)", type=["csv", "xlsx"])
-    if uploaded_file:
-        df = load_data(uploaded_file)
+    """Enhanced main function with session cleanup"""
+    st.session_state.setdefault('authenticated', False)
         
-        if df.empty:
-            st.error("Uploaded file is empty. Please upload a valid dataset.")
-            return
-        
-        if df.isnull().sum().any():
-            st.warning("⚠️ Missing values detected in the dataset.")
-            strategy = st.selectbox("Handle missing values by:", ["None", "Drop Rows", "Fill with Mean", "Fill with Median"])
-            if strategy != "None":
-                df = handle_missing_data(df, strategy)
-        
-        st.sidebar.header("Data Customization")
-        columns = st.sidebar.multiselect("Select columns for analysis", df.columns.tolist(), default=df.columns.tolist())
-        df_filtered = df[columns]
-
-        if 'date' in df_filtered.columns:
-            min_date = df_filtered['date'].min()
-            max_date = df_filtered['date'].max()
-            date_range = st.sidebar.date_input("Select date range", [min_date, max_date])
-            df_filtered = df_filtered[(df_filtered['date'] >= date_range[0]) & (df_filtered['date'] <= date_range[1])]
-
-        if len(df_filtered) > 1000:
-            sample_size = st.sidebar.slider("Sample size for analysis", 100, len(df_filtered), 1000)
-            df_filtered = df_filtered.sample(sample_size)
-
-        if st.checkbox("View Data"):
-            st.write("### Processed Data Preview")
-            st.dataframe(df_filtered)
-
-        st.sidebar.header("Business Context")
-        industry = st.sidebar.selectbox("Industry Sector", ["Retail", "E-commerce", "Manufacturing", "Healthcare", "Finance"])
-        goal = st.sidebar.selectbox("Primary Objective", ["Revenue Growth", "Cost Optimization", "Customer Experience", "Operational Efficiency"])
-
-        user_query = st.text_input("Ask a question about your data (e.g., 'Show me sales trends over time')")
-
-        if st.button("Analyze Data & Generate Report"):
-            with st.spinner("Analyzing data with AI..."):
-                report = send_data_to_gemini(df_filtered, industry, goal, user_query)
-            try:
-                code_blocks = re.findall(r'```python\n(.*?)\n```', report, re.DOTALL)
-                insights = re.findall(r'Insight:\s*(.*?)(?=\n\s*```|$)', report, re.DOTALL)
-
-                if not code_blocks:
-                    st.error("No code found in response.")
-                    return
-
-                exec_env = {'df': df_filtered, 'st': st, 'px': px, 'pd': pd, 'np': np, 'datetime': datetime}
-                images = []
-
-                for i, code in enumerate(code_blocks):
-                    with st.container():
-                        try:
-                            exec(code, exec_env)
-                            
-                            # Retrieve figure with proper naming convention
-                            fig_name = f'fig{i+1}'
-                            fig = exec_env.get(fig_name)
-                            
-                            if fig and hasattr(fig, 'data') and len(fig.data) > 0:
-                                # Generate high-res image
-                                img_bytes = pio.to_image(fig, format="png", scale=3)
-                                images.append(BytesIO(img_bytes))
-                                
-                            if i < len(insights):
-                                st.success(f"**Insight {i+1}:** {insights[i].strip()}")
-                        except Exception as e:
-                            st.error(f"Error executing KPI {i+1}: {str(e)}")
-
-                # Generate PDF report
-                report_content = f"Industry: {industry}\nObjective: {goal}\n\nKey Insights:\n" + "\n".join([f"{i+1}. {insight}" for i, insight in enumerate(insights)])
-                pdf_report = create_pdf_report(report_content, images)
-                st.download_button("Download Full Report", pdf_report, file_name="business_report.pdf", mime="application/pdf")
-
-            except Exception as e:
-                st.error(f"Processing Error: {str(e)}")
-
-        # User feedback
-        st.sidebar.header("Feedback")
-        feedback = st.sidebar.text_area("Provide feedback to help us improve!")
-        if st.sidebar.button("Submit Feedback"):
-            st.sidebar.success("Thank you for your feedback!")
-            
-        # User guide
-        with st.expander("📖 User Guide"):
-            st.write("""
-            1. Upload your dataset (CSV or Excel)
-            2. Select industry sector and primary objective
-            3. Customize data using sidebar filters
-            4. Enter specific questions (optional)
-            5. Click 'Analyze Data & Generate Report'
-            6. View interactive visualizations
-            7. Download PDF report
-            """)
+    if not st.session_state.authenticated:
+        render_login_page()
+    else:
+        main_application()
 
 if __name__ == "__main__":
     main()
